@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>AR Trace</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+
+  #stage {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    overflow: hidden;
+  }
+
+  #camera {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    background: #111;
+  }
+
+  #cameraMsg {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff; text-align: center; padding: 24px;
+    font-size: 14px; line-height: 1.6; max-width: 86%;
+    z-index: 2; display: none;
+  }
+  #cameraMsg h3 { margin: 0 0 8px; font-size: 16px; }
+  #cameraMsg ol { text-align: left; margin: 10px 0; padding-left: 20px; }
+  #cameraMsg button {
+    margin-top: 14px; background: rgba(80,160,255,0.4);
+    border: 1px solid rgba(120,180,255,0.6); color: #fff;
+    padding: 10px 18px; border-radius: 10px; font-size: 14px;
+  }
+
+  #startOverlay {
+    position: absolute; inset: 0; z-index: 3;
+    display: flex; align-items: center; justify-content: center;
+    background: #0a0a0d;
+  }
+  #startBtn {
+    background: rgba(80,160,255,0.5);
+    border: 1px solid rgba(120,180,255,0.7);
+    color: #fff; padding: 16px 28px; border-radius: 14px;
+    font-size: 16px; font-weight: 600;
+  }
+
+  #overlayImage {
+    position: absolute;
+    top: 0; left: 0;
+    max-width: none;
+    pointer-events: none;
+    display: none;
+    will-change: transform;
+    transform-origin: center center;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  #dragCatcher {
+    position: absolute; inset: 0;
+    z-index: 5;
+    touch-action: none;
+    pointer-events: none; /* enabled via JS only once an overlay image is loaded */
+  }
+
+  /* ---------- Control panel ---------- */
+  #panel {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 20;
+    background: rgba(15, 15, 20, 0.55);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    color: #fff;
+    transition: transform 0.25s ease, opacity 0.25s ease;
+    border-top: 1px solid rgba(255,255,255,0.12);
+  }
+  #panel.hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+  }
+
+  .row label {
+    width: 62px;
+    flex-shrink: 0;
+    font-size: 12px;
+    opacity: 0.85;
+    letter-spacing: 0.02em;
+  }
+
+  input[type="range"] {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.25);
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    border: none;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    cursor: pointer;
+  }
+
+  .btnRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 2px;
+  }
+
+  button, .fileBtn {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: #fff;
+    padding: 9px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    cursor: pointer;
+    flex: 1;
+    min-width: 70px;
+    text-align: center;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  button:active, .fileBtn:active {
+    background: rgba(255,255,255,0.28);
+  }
+
+  button.accent {
+    background: rgba(80, 160, 255, 0.35);
+    border-color: rgba(120, 180, 255, 0.5);
+  }
+
+  #fileInput { display: none; }
+
+  /* Floating show-UI button when panel hidden */
+  #showUIBtn {
+    position: fixed;
+    bottom: calc(14px + env(safe-area-inset-bottom));
+    right: 14px;
+    z-index: 25;
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    background: rgba(20,20,25,0.55);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+    font-size: 18px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  #showUIBtn.visible { display: flex; }
+
+  .sectionTitle {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.55;
+    margin: 10px 0 2px;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="camera" autoplay playsinline muted></video>
+  <div id="cameraMsg"></div>
+  <div id="startOverlay">
+    <button id="startBtn">📷 Tap to Start Camera</button>
+  </div>
+  <img id="overlayImage" alt="overlay">
+  <div id="dragCatcher"></div>
+</div>
+
+<button id="showUIBtn" title="Show controls">⚙︎</button>
+
+<div id="panel">
+  <div class="btnRow">
+    <label class="fileBtn" for="fileInput">📁 Upload Image</label>
+    <input type="file" id="fileInput" accept="image/*">
+    <button id="resetBtn">↺ Reset</button>
+    <button id="hideUIBtn">👁 Hide UI</button>
+  </div>
+
+  <div class="row">
+    <label>Opacity</label>
+    <input type="range" id="opacitySlider" min="0" max="100" value="55">
+  </div>
+
+  <div class="row">
+    <label>Size</label>
+    <input type="range" id="scaleSlider" min="10" max="400" value="100">
+  </div>
+
+  <div class="row">
+    <label>Rotate</label>
+    <input type="range" id="rotateSlider" min="-180" max="180" value="0">
+  </div>
+
+  <div class="btnRow">
+    <button id="flipHBtn">⇋ Flip H</button>
+    <button id="flipVBtn">⇅ Flip V</button>
+    <button id="fullscreenBtn">⛶ Fullscreen</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const video = document.getElementById('camera');
+  const cameraMsg = document.getElementById('cameraMsg');
+  const startOverlay = document.getElementById('startOverlay');
+  const startBtn = document.getElementById('startBtn');
+  const img = document.getElementById('overlayImage');
+  const dragCatcher = document.getElementById('dragCatcher');
+  const panel = document.getElementById('panel');
+  const showUIBtn = document.getElementById('showUIBtn');
+
+  const fileInput = document.getElementById('fileInput');
+  const opacitySlider = document.getElementById('opacitySlider');
+  const scaleSlider = document.getElementById('scaleSlider');
+  const rotateSlider = document.getElementById('rotateSlider');
+  const flipHBtn = document.getElementById('flipHBtn');
+  const flipVBtn = document.getElementById('flipVBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const hideUIBtn = document.getElementById('hideUIBtn');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+
+  // ---------- Camera setup ----------
+  function showCameraError(err) {
+    let title = 'Camera unavailable';
+    let body = '';
+
+    const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost';
+
+    if (!isSecure) {
+      title = 'Insecure connection';
+      body = 'Camera access requires HTTPS (or localhost). This page was opened over ' +
+             '<b>' + location.protocol + '</b>, which browsers block for privacy reasons. ' +
+             'Host this file on an HTTPS server (e.g. GitHub Pages, Netlify) or serve it via ' +
+             '<code>localhost</code>, then reload.';
+    } else if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+      body =
+        '<ol>' +
+        '<li>Tap the <b>aA</b> / lock icon in your address bar</li>' +
+        '<li>Find <b>Camera</b> permission and set it to <b>Allow</b></li>' +
+        '<li>Reload this page and tap "Start Camera" again</li>' +
+        '</ol>' +
+        'On iOS: Settings → Safari → Camera → Allow.<br>On Android Chrome: ⋮ menu → Site settings → Camera → Allow.';
+    } else if (err && err.name === 'NotFoundError') {
+      title = 'No camera found';
+      body = 'This device doesn\'t appear to have a usable camera, or it\'s in use by another app. Close other camera apps and try again.';
+    } else if (err && err.name === 'NotReadableError') {
+      title = 'Camera in use';
+      body = 'Another app or browser tab is currently using the camera. Close it and try again.';
+    } else {
+      body = 'Something went wrong requesting the camera' + (err && err.message ? (': ' + err.message) : '.') +
+             ' Try reloading the page.';
+    }
+
+    cameraMsg.innerHTML = '<h3>' + title + '</h3><div>' + body + '</div><button id="retryBtn">Try Again</button>';
+    cameraMsg.style.display = 'block';
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      cameraMsg.style.display = 'none';
+      startOverlay.style.display = 'flex';
+    });
+  }
+
+  async function startCamera() {
+    startBtn.disabled = true;
+    startBtn.textContent = 'Requesting camera…';
+    try {
+      const constraints = {
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      startOverlay.style.display = 'none';
+      cameraMsg.style.display = 'none';
+    } catch (err) {
+      console.warn('Rear camera request failed, trying default camera:', err);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        startOverlay.style.display = 'none';
+        cameraMsg.style.display = 'none';
+      } catch (err2) {
+        console.error('Camera error:', err2);
+        startOverlay.style.display = 'none';
+        showCameraError(err2);
+      }
+    } finally {
+      startBtn.disabled = false;
+      startBtn.textContent = '📷 Tap to Start Camera';
+    }
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    startOverlay.style.display = 'none';
+    showCameraError({ name: 'Unsupported', message: 'This browser does not support camera access (getUserMedia).' });
+  } else {
+    startBtn.addEventListener('click', startCamera);
+  }
+
+  // ---------- Transform state ----------
+  const state = {
+    x: 0, y: 0,
+    scale: 1,
+    rotate: 0,
+    flipX: 1,
+    flipY: 1
+  };
+
+  let imgLoaded = false;
+
+  function applyTransform() {
+    img.style.transform =
+      `translate(-50%, -50%) translate(${state.x}px, ${state.y}px) ` +
+      `rotate(${state.rotate}deg) scale(${state.scale * state.flipX}, ${state.scale * state.flipY})`;
+  }
+
+  function centerImage() {
+    state.x = 0;
+    state.y = 0;
+  }
+
+  // ---------- Image upload ----------
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      img.src = ev.target.result;
+      img.onload = () => {
+        img.style.display = 'block';
+        imgLoaded = true;
+        dragCatcher.style.pointerEvents = 'auto';
+        img.style.left = (window.innerWidth / 2) + 'px';
+        img.style.top = (window.innerHeight / 2) + 'px';
+        centerImage();
+        state.scale = 1;
+        state.rotate = 0;
+        state.flipX = 1;
+        state.flipY = 1;
+        scaleSlider.value = 100;
+        rotateSlider.value = 0;
+        applyTransform();
+      };
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // ---------- Sliders ----------
+  opacitySlider.addEventListener('input', () => {
+    img.style.opacity = opacitySlider.value / 100;
+  });
+  img.style.opacity = opacitySlider.value / 100;
+
+  scaleSlider.addEventListener('input', () => {
+    state.scale = scaleSlider.value / 100;
+    applyTransform();
+  });
+
+  rotateSlider.addEventListener('input', () => {
+    state.rotate = parseFloat(rotateSlider.value);
+    applyTransform();
+  });
+
+  flipHBtn.addEventListener('click', () => {
+    state.flipX *= -1;
+    applyTransform();
+  });
+  flipVBtn.addEventListener('click', () => {
+    state.flipY *= -1;
+    applyTransform();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    centerImage();
+    state.scale = 1;
+    state.rotate = 0;
+    state.flipX = 1;
+    state.flipY = 1;
+    scaleSlider.value = 100;
+    rotateSlider.value = 0;
+    opacitySlider.value = 55;
+    img.style.opacity = 0.55;
+    img.style.left = (window.innerWidth / 2) + 'px';
+    img.style.top = (window.innerHeight / 2) + 'px';
+    applyTransform();
+  });
+
+  // ---------- Drag & Pinch (touch + mouse) ----------
+  let pointers = new Map();
+  let dragStart = null;
+  let pinchStart = null;
+
+  function getDistance(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+  }
+
+  function onPointerDown(e) {
+    if (!imgLoaded) return;
+    dragCatcher.setPointerCapture && dragCatcher.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 1) {
+      dragStart = {
+        x: e.clientX, y: e.clientY,
+        imgX: state.x, imgY: state.y
+      };
+    } else if (pointers.size === 2) {
+      const pts = Array.from(pointers.values());
+      pinchStart = {
+        dist: getDistance(pts[0], pts[1]),
+        scale: state.scale,
+        rotate: state.rotate,
+        angle: Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x)
+      };
+      dragStart = null;
+    }
+  }
+
+  function onPointerMove(e) {
+    if (!imgLoaded || !pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointers.size === 1 && dragStart) {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      state.x = dragStart.imgX + dx;
+      state.y = dragStart.imgY + dy;
+      applyTransform();
+    } else if (pointers.size === 2 && pinchStart) {
+      const pts = Array.from(pointers.values());
+      const newDist = getDistance(pts[0], pts[1]);
+      const ratio = newDist / pinchStart.dist;
+      state.scale = Math.min(4, Math.max(0.1, pinchStart.scale * ratio));
+
+      const newAngle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+      const angleDeltaDeg = (newAngle - pinchStart.angle) * (180 / Math.PI);
+      state.rotate = pinchStart.rotate + angleDeltaDeg;
+
+      scaleSlider.value = Math.round(state.scale * 100);
+      rotateSlider.value = Math.round(((state.rotate + 180) % 360 + 360) % 360 - 180);
+      applyTransform();
+    }
+  }
+
+  function onPointerUp(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0) {
+      dragStart = null;
+      pinchStart = null;
+    } else if (pointers.size === 1) {
+      const remaining = Array.from(pointers.entries())[0];
+      dragStart = {
+        x: remaining[1].x, y: remaining[1].y,
+        imgX: state.x, imgY: state.y
+      };
+      pinchStart = null;
+    }
+  }
+
+  dragCatcher.addEventListener('pointerdown', onPointerDown);
+  dragCatcher.addEventListener('pointermove', onPointerMove);
+  dragCatcher.addEventListener('pointerup', onPointerUp);
+  dragCatcher.addEventListener('pointercancel', onPointerUp);
+  dragCatcher.addEventListener('pointerleave', onPointerUp);
+
+  // ---------- Hide UI / Fullscreen ----------
+  function hidePanel() {
+    panel.classList.add('hidden');
+    showUIBtn.classList.add('visible');
+  }
+  function showPanel() {
+    panel.classList.remove('hidden');
+    showUIBtn.classList.remove('visible');
+  }
+
+  hideUIBtn.addEventListener('click', hidePanel);
+  showUIBtn.addEventListener('click', showPanel);
+
+  fullscreenBtn.addEventListener('click', () => {
+    const el = document.documentElement;
+    if (!document.fullscreenElement) {
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } else {
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    if (imgLoaded) {
+      img.style.left = (window.innerWidth / 2) + 'px';
+      img.style.top = (window.innerHeight / 2) + 'px';
+    }
+  });
+
+  applyTransform();
+})();
+</script>
+</body>
+</html>
